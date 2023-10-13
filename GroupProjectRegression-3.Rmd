@@ -1,0 +1,600 @@
+---
+title: "GroupProjectRegression"
+output: html_document
+date: "2023-10-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Import library
+```{r}
+library(tidyverse)
+library(corrplot)
+library(GGally)
+library(dplyr)
+library(car)
+library(caret)
+library(ggfortify)
+library(MASS) #install first
+library(neuralnet) #install first
+library(caTools) #install first
+library(MLmetrics)
+```
+
+
+Import Data and see what is missing in the data
+```{r}
+train_data <- read_csv2("Eurobank_train.csv",show_col_types = FALSE)
+
+glimpse(train_data)
+
+
+train_data %>%
+  filter_all(any_vars(is.na(.))) %>% select_if(function(x) any(is.na(x))) %>% glimpse()
+
+
+train_data %>% count(Education) #na = 1045
+train_data %>% count(Marital_status) #na = 509
+train_data %>% count(Income_bracket) # na = 148
+train_data %>% count(Open_to_buy_avg) #na = 532
+train_data %>% count(Transaction_amount_total) #na = 294
+
+
+missing_count <- sum(is.na(train_data$Open_to_buy_avg))
+print(missing_count)
+
+missing_count <- sum(is.na(train_data$Transaction_amount_total))
+print(missing_count)
+
+```
+
+
+```{r}
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+#impute education
+mode_education <- get_mode(train_data$Education[!is.na(train_data$Education)])
+
+
+train_data <- train_data %>%
+  mutate(Education.missing = as.factor(ifelse(is.na(Education), 1, 0)))
+
+
+train_data$Education[is.na(train_data$Education)] <- mode_education
+
+train_data %>%
+  count(Education, Education.missing)
+
+
+#impute Marital_status
+
+mode_Marital_status <- get_mode(train_data$Marital_status[!is.na(train_data$Marital_status)])
+
+
+train_data <- train_data %>%
+  mutate(Marital_status.missing = as.factor(ifelse(is.na(Marital_status), 1, 0)))
+
+
+train_data$Marital_status[is.na(train_data$Marital_status)] <- mode_Marital_status
+
+train_data %>%
+  count(Marital_status, Marital_status.missing)
+
+#impute Income_bracket
+
+mode_Income <- get_mode(train_data$Income_bracket[!is.na(train_data$Income_bracket)])
+
+
+train_data <- train_data %>%
+  mutate(Income_bracket.missing = as.factor(ifelse(is.na(Income_bracket), 1, 0)))
+
+
+train_data$Income_bracket[is.na(train_data$Income_bracket)] <- mode_Income
+
+train_data %>%
+  count(Income_bracket, Income_bracket.missing)
+
+
+# impute Open_to_buy_avg
+
+train_data <- train_data %>%
+  mutate(Open_to_buy_avg.missing = as.factor(ifelse(is.na(Open_to_buy_avg), 1, 0)))
+
+train_data <- train_data %>%
+  mutate(Open_to_buy_avg = ifelse(is.na(Open_to_buy_avg), mean(Open_to_buy_avg, na.rm = TRUE),
+                                       Open_to_buy_avg))
+
+train_data %>%
+  count(Open_to_buy_avg, Open_to_buy_avg.missing)
+
+# impute Transaction_amount_total
+
+train_data <- train_data %>%
+  mutate(Transaction_amount_total.missing = as.factor(ifelse(is.na(Transaction_amount_total), 1, 0)))
+
+train_data <- train_data %>%
+  mutate(Transaction_amount_total = ifelse(is.na(Transaction_amount_total), mean(Transaction_amount_total, na.rm = TRUE),
+                                           Transaction_amount_total))
+
+train_data %>%
+  count(Transaction_amount_total, Transaction_amount_total.missing)
+
+
+# otherwise not in this list remove
+# 
+train_data <- train_data %>% filter_all(all_vars(!is.na(.)))
+
+summary(train_data)
+
+train_data$Churn <- as.factor(train_data$Churn)
+train_data$Gender <- as.factor(train_data$Gender)
+train_data$Education <- as.factor(train_data$Education)
+train_data$Marital_status <- as.factor(train_data$Marital_status)
+train_data$Income_bracket <- as.factor(train_data$Income_bracket)
+train_data$Card_type <- as.factor(train_data$Card_type)
+```
+
+Start Regression
+
+```{r}
+train_data$Churn <- as.factor(train_data$Churn)
+train_data$Gender <- as.factor(train_data$Gender)
+train_data$Education <- as.factor(train_data$Education)
+train_data$Marital_status <- as.factor(train_data$Marital_status)
+train_data$Income_bracket <- as.factor(train_data$Income_bracket)
+train_data$Card_type <- as.factor(train_data$Card_type)
+
+str(train_data)
+
+train.control <- trainControl(method = "repeatedcv", number = 10,
+                              repeats = 5,
+                              verboseIter = TRUE,
+                              classProbs = T)
+set.seed(2)
+
+simple.logistic.regression <- train(Churn ~ .,
+                                    data = train_data,
+                                    method = "glm", #method "glm" for logistic regression 
+                                    metric = "Accuracy", #Accuracy selected for classifica 
+                                    trControl = train.control)
+
+simple.logistic.regression
+
+summary(simple.logistic.regression)
+
+```
+Print summary and coefficient
+```{r}
+
+library(broom)
+tidy_results <- tidy(simple.logistic.regression$finalModel)
+significant_vars <- tidy_results$term[tidy_results$p.value < 0.05]
+
+print(significant_vars)
+
+# Get the summary of the linear regression model
+summary_data <- summary(simple.logistic.regression)
+
+# Extract coefficients and p-values
+coefficients <- summary_data$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+
+# Sort coefficients by p-value
+sorted_coeffs <- coefficients[order(p_values), ]
+
+# Print the sorted coefficients
+print(sorted_coeffs)
+```
+
+```{r}
+
+train_data <- train_data[ , !(names(train_data) %in% c("Education.missing", "Marital_status.missing", "Income_bracket.missing", "Open_to_buy_avg.missing", "Transaction_amount_total.missing"))]
+
+clean_data_frame <- subset(train_data, select = -c(Customer_ID,Customer_since,Open_to_buy_avg))
+```
+#Run Regression again, see if there is improvment
+```{r}
+simple.logistic.regression_adjuested <- train(Churn ~ .,
+                                    data = clean_data_frame,
+                                    method = "glm", #method "glm" for logistic regression 
+                                    metric = "Accuracy", #Accuracy selected for classifica 
+                                    trControl = train.control)
+
+simple.logistic.regression_adjuested
+```
+# result is nearly the same so no improvement
+
+Move to stepwise training
+
+```{r}
+ stepwise.linear.regression <- train(Churn ~ .,
+                                     data = clean_data_frame, 
+                                     method = "glmStepAIC",
+                                     metric = "Accuracy", 
+                                     trControl = train.control,
+                                     trace = 0)
+ stepwise.linear.regression
+ 
+summary(stepwise.linear.regression)
+```
+
+
+```{r}
+#Lasso
+set.seed(2)
+
+tuning.grid <- expand.grid(lambda = 10^seq(2, -2, length = 100),
+                           alpha = 1)
+#Define grid to search for best tuning parameter lambda
+lasso.linear.regression <- train(Churn ~ .,
+                                 data = clean_data_frame,
+                                 method = "glmnet",
+                                 metric = "Accuracy",
+                                 trControl = train.control,
+                                 tuneGrid = tuning.grid)
+autoplot(lasso.linear.regression$finalModel)
+lasso.linear.regression
+
+```
+
+Rigid
+
+```{r}
+tuning.grid <- expand.grid(lambda = 10^seq(2, -2, length = 100),alpha = 0) #IMP: alpha =0 for ridge 
+ridge.linear.regression <- train(form=Churn ~ .,
+                                 data = clean_data_frame,
+                                 method = "glmnet",
+                                 metric = "Accuracy",
+                                 trControl = train.control,
+                                 tuneGrid = tuning.grid)
+autoplot(ridge.linear.regression$finalModel) + theme_minimal()
+
+ridge.linear.regression
+```
+
+
+```{r}
+library(ranger)
+
+train.control <- trainControl(method = "cv", #5-fold cross validation
+                              number =  5,
+                              classProbs =  T,
+                              savePredictions =  "final") 
+#Save the hold-out predictions for the best tune parameter
+
+# Define train object
+set.seed(42) 
+decision.tree <- train(form =Churn ~ ., #"Class" is Y
+                       data = train_data, 
+                       method = "rpart", #The method for single decision tree
+                       metric = "Accuracy", 
+                       #Note: you can only select either Accuracy or Kappa for classification, 
+                       #the method for selecting other metrics is shown at the end of this document
+                       trControl =  train.control, 
+                       tuneLength = 10 ) #Generates 10 values for hyperparameter tuning 
+#(can be used instead of tuneGrid)
+
+#Displays hyperparameter tuning
+ggplot(decision.tree) +
+  theme_minimal()
+
+#Display cross-validated model performance
+defaultSummary(decision.tree$pred)
+
+library(rpart.plot) 
+#install package first
+
+rpart.plot(decision.tree$finalModel, #We have to access the finalModel object
+           type = 0) #type changes the look of the plot (optional)
+
+
+library(ranger)
+set.seed(42)
+random.forest <- train(form = Churn ~ .,
+                       data = train_data,
+                       method = "ranger", #Select "ranger" for Random Forests
+                       metric = "Accuracy",
+                       trControl = train.control,
+                       importance = "impurity", #to plot variable importance plot num.trees = 500, #number of trees (optional)
+                       tuneGrid = expand.grid(mtry=seq(1:ncol(train_data)), #subset of variables
+                                              splitrule="gini", #default for classification
+                                              min.node.size = 1)) #minimum observations at terminal nodes
+#Alternatively define tuneLength instead of tuneGrid
+#[...]tuneLength = 5)
+#Displays hyperparameter tuning (mtry)
+ggplot(random.forest) + theme_minimal()
+random.forest
+
+
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+library(xgboost)
+set.seed(42)
+
+# Train control with early stopping
+train.control <- trainControl(
+  method = "cv", 
+  number = 10,  # Reduced number of folds
+  verboseIter = TRUE,
+  allowParallel = TRUE
+)
+ 
+boosted.trees <- train(form = Churn ~ .,
+                       data = train_data,
+                       method = "xgbTree", #Select "xgbTree" for Gradient Boosting 
+                       metric = "Accuracy",
+                       verbosity = 0,
+                       trControl = train.control,
+                       tuneLength = 3)
+
+#Define tuneLength or tuneGrid (see code below)
+#Displays final hyperparameters selected
+
+boosted.trees$bestTune
+defaultSummary(boosted.trees$pred)
+```
+
+```{r}
+boosted.trees_tune <- train(form = Churn ~ .,
+                       data = train_data,
+                       method = "xgbTree", #Select "xgbTree" for Gradient Boosting 
+                       metric = "Accuracy",
+                       verbosity = 0,
+                       trControl = train.control,
+                       tuneLength = 3)
+```
+
+
+```{r}
+#prep test_data
+#
+test_data <- read_csv2("Eurobank_test.csv",show_col_types = FALSE)
+
+
+test_data %>%
+  filter_all(any_vars(is.na(.))) %>% select_if(function(x) any(is.na(x))) %>% glimpse()
+
+
+test_data %>% count(Education) #na = 1045
+test_data %>% count(Marital_status) #na = 509
+test_data %>% count(Income_bracket) # na = 148
+test_data %>% count(Open_to_buy_avg) #na = 532
+test_data %>% count(Transaction_amount_total) #na = 294
+
+
+missing_count <- sum(is.na(test_data$Open_to_buy_avg))
+print(missing_count)
+
+missing_count <- sum(is.na(test_data$Transaction_amount_total))
+print(missing_count)
+
+
+
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+#impute education
+mode_education <- get_mode(test_data$Education[!is.na(test_data$Education)])
+
+
+test_data <- test_data %>%
+  mutate(Education.missing = as.factor(ifelse(is.na(Education), 1, 0)))
+
+
+test_data$Education[is.na(test_data$Education)] <- mode_education
+
+test_data %>%
+  count(Education, Education.missing)
+
+
+#impute Marital_status
+
+mode_Marital_status <- get_mode(test_data$Marital_status[!is.na(test_data$Marital_status)])
+
+
+test_data <- test_data %>%
+  mutate(Marital_status.missing = as.factor(ifelse(is.na(Marital_status), 1, 0)))
+
+
+test_data$Marital_status[is.na(test_data$Marital_status)] <- mode_Marital_status
+
+test_data %>%
+  count(Marital_status, Marital_status.missing)
+
+#impute Income_bracket
+
+mode_Income <- get_mode(test_data$Income_bracket[!is.na(test_data$Income_bracket)])
+
+
+test_data <- test_data %>%
+  mutate(Income_bracket.missing = as.factor(ifelse(is.na(Income_bracket), 1, 0)))
+
+
+test_data$Income_bracket[is.na(test_data$Income_bracket)] <- mode_Income
+
+test_data %>%
+  count(Income_bracket, Income_bracket.missing)
+
+
+# impute Open_to_buy_avg
+
+test_data <- test_data %>%
+  mutate(Open_to_buy_avg.missing = as.factor(ifelse(is.na(Open_to_buy_avg), 1, 0)))
+
+test_data <- test_data %>%
+  mutate(Open_to_buy_avg = ifelse(is.na(Open_to_buy_avg), mean(Open_to_buy_avg, na.rm = TRUE),
+                                  Open_to_buy_avg))
+
+test_data %>%
+  count(Open_to_buy_avg, Open_to_buy_avg.missing)
+
+# impute Transaction_amount_total
+
+test_data <- test_data %>%
+  mutate(Transaction_amount_total.missing = as.factor(ifelse(is.na(Transaction_amount_total), 1, 0)))
+
+test_data <- test_data %>%
+  mutate(Transaction_amount_total = ifelse(is.na(Transaction_amount_total), mean(Transaction_amount_total, na.rm = TRUE),
+                                           Transaction_amount_total))
+
+test_data %>%
+  count(Transaction_amount_total, Transaction_amount_total.missing)
+
+
+
+# otherwise not in this list remove
+# 
+test_data <- test_data %>% filter_all(all_vars(!is.na(.)))
+
+summary(test_data)
+
+
+
+
+
+
+```
+```{r}
+
+test_predictions <- predict(boosted.trees, newdata = test_data)
+confusionMatrix(data = test_predictions, 
+                               reference = as.factor(test_data$Churn), 
+                               positive = "Yes")
+```
+
+```{r}
+importance_matrix <- xgb.importance(model = boosted.trees$finalModel)
+print(importance_matrix)
+```
+
+```{r}
+train_data$Avg_Transaction_Amount <- train_data$Transaction_amount_total / train_data$Transaction_num_total
+train_data$Revolving_Balance_Ratio <- train_data$Revolving_balance_total / train_data$Transaction_amount_total
+
+test_data$Avg_Transaction_Amount <- test_data$Transaction_amount_total / test_data$Transaction_num_total
+test_data$Revolving_Balance_Ratio <- test_data$Revolving_balance_total / test_data$Transaction_amount_total
+
+negatives <- sum(train_data$Churn == "No")
+positives <- sum(train_data$Churn == "Yes")
+scale_pos_weight_value <- negatives / positives
+
+
+boosted.trees <- train(form = Churn ~ .,
+                       data = train_data, # use balanced data if you used SMOTE
+                       method = "xgbTree",
+                       metric = "Accuracy",
+                       verbosity = 0,
+                       trControl = train.control,
+                       tuneLength = 3,
+                       scale_pos_weight = scale_pos_weight_value)
+test_predictions <- predict(boosted.trees, newdata = test_data)
+confusionMatrix(data = test_predictions, 
+                               reference = as.factor(test_data$Churn), 
+                               positive = "Yes")
+
+```
+
+
+
+create interaction test for tuning
+
+```{r}
+# 1. Customer_age and Credit_limit
+train_data_2 <- train_data
+test_data_2 <- test_data
+
+train_data_2$interaction_age_credit <- train_data$Customer_age * train_data$Credit_limit
+test_data_2$interaction_age_credit <- test_data$Customer_age * test_data$Credit_limit
+
+# 2. Products_num and Transaction_amount_total
+train_data_2$interaction_products_transAmount <- train_data$Products_num * train_data$Transaction_amount_total
+test_data_2$interaction_products_transAmount <- test_data$Products_num * test_data$Transaction_amount_total
+
+
+library(xgboost)
+set.seed(42)
+boosted.trees_2 <- train(form = Churn ~ .,
+                         data = test_data_2,
+                         method = "xgbTree", #Select "xgbTree" for Gradient Boosting 
+                         metric = "Accuracy",
+                         verbosity = 0,
+                         trControl = train.control,
+                         tuneLength = 3)
+
+#Define tuneLength or tuneGrid (see code below)
+#Displays final hyperparameters selected
+boosted.trees$bestTune
+prSummary(random.forest$pred, lev = levels(boosted.trees$pred$obs))
+
+defaultSummary(boosted.trees$pred)
+
+test_predictions <- predict(boosted.trees_2, newdata = test_data_2)
+confusionMatrix(data = test_predictions, 
+                reference = as.factor(test_data$Churn), 
+                positive = "Yes")
+
+
+
+```
+
+```{r}
+library(xgboost)
+set.seed(42)
+xgb_grid <- expand.grid(
+  eta = c(0.05),
+  max_depth = c(6, 8),
+  gamma = c(0),
+  colsample_bytree = c(0.6),
+  min_child_weight = c(1, 5),
+  subsample = c(0.7),
+  nrounds = c(100)
+)
+
+# Train control with early stopping
+train.control <- trainControl(
+  method = "cv", 
+  number = 10,  # Reduced number of folds
+  verboseIter = TRUE,
+  allowParallel = TRUE
+)
+ 
+set.seed(42)
+boosted.trees_tuned <- train(
+  Churn ~ .,
+  data = train_data,
+  method = "xgbTree",
+  metric = "Accuracy",
+  trControl = train.control,
+  tuneGrid = xgb_grid,
+  verbosity = 1  # This will print detailed logs for the boosting rounds
+)
+
+#Define tuneLength or tuneGrid (see code below)
+#Displays final hyperparameters selected
+boosted.trees_tuned$bestTune
+
+defaultSummary(boosted.trees_tuned$pred)
+
+#now check with the accuracy
+
+test_predictions <- predict(boosted.trees_tuned, newdata = test_data)
+confusionMatrix(data = test_predictions, 
+                               reference = as.factor(test_data$Churn), 
+                               positive = "Yes")
+```
+
+
